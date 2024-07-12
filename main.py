@@ -52,6 +52,12 @@ class DBCommands:
                             'wp.worker_id=(SELECT id FROM workers w WHERE w.fullname=$1) '\
                             'and wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$2) '\
                             'and wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3))'
+    CHECK_WORKPLACE_DATA = 'SELECT * from workplaces wp where '\
+                            'wp.worker_id=(SELECT id FROM workers w WHERE w.fullname=$1) '\
+                            'and wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$2) '\
+                            'and wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3)'
+    UPDATE_WORKPLACE = 'UPDATE workplaces wp SET date_start=$2, employment=$3 '\
+                        'WHERE wp.id=$1'
     CHECK_IS_POSITION = 'SELECT EXISTS (SELECT * FROM positions p WHERE p.pos_name=$1)'
     EDIT_POSITION = 'update workplaces wp set date_start=$4, employment=$5 '\
                     'WHERE wp.worker_id=$1 and '\
@@ -298,6 +304,16 @@ class DBCommands:
         args = (name, position, department)
         result = await DataBase.execute(command, *args, fetchval=True)
         return result
+    
+    async def check_workplace_data(self, name, position, department, date_start, employment):
+        command = self.CHECK_WORKPLACE_DATA
+        args = (name, position, department)
+        result = await DataBase.execute(command, *args, fetch=True)
+        if result[0][5] == None or result[0][7] == '':
+                        command = self.UPDATE_WORKPLACE
+                        args = (result[0][0], date_start, employment)
+                        await DataBase.execute(command, *args, execute=True)
+
 
     async def join_position(self, worker_id, pos_name, dep_name, date_start, employment):
         # Функция добавляет сотруднику должность в подразделении, если таковые существуют

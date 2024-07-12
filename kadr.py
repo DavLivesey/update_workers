@@ -1,8 +1,10 @@
 import glob
 import os
-import datetime, time
+import datetime
+import time
 from main import DBCommands
 import asyncio
+import xml.etree.ElementTree as ET
 
 db = DBCommands()
 
@@ -15,80 +17,56 @@ def remove_upper_lines(doc, n):
     else:
         return doc
 
-
-
-with open(latest_file, "r") as document:
-    lines = document.readlines()
-    new_doc = remove_upper_lines(lines, 2)
-    person = 1
-    index = 0
-    list_workers = []
-  
-    while index < len(new_doc)-1:
-            worker = {'ФИО': '',              
-              'Дата рождения': '',
-              'Должность': '',
-              'Подразделение': '',
-              'Вид занятости': '',              
-              'Дата приёма': '',
-              'Дата увольнения': '',
-              'Статус': '',}
-            worker['ФИО'] = new_doc[index][11:-4]
-            worker['Дата рождения'] = new_doc[index+1][29:-13]
-            worker['Должность'] = new_doc[index+2][23:-4]
-            worker['Подразделение'] = new_doc[index+3][31:-4]
-            worker['Вид занятости'] = new_doc[index+4][29:-4]
-            worker['Дата приёма'] = new_doc[index+5][25:-13]
-            worker['Дата увольнения'] = new_doc[index+6][33:-13]
-            worker['Статус'] = new_doc[index+10][17:-4]
-            list_workers.append(worker)
-            index += 11
-            person += 1
-
-async def import_workers(): 
-    for workman in list_workers:
-        name = workman['ФИО']
-        exist_workman = await db.check_worker(name)
-        workman_id = await db.get_worker_id(name)
-        if exist_workman and workman['Статус'] == 'Работающий':
-            if workman['Дата приёма'] == '0001-01-01':
-                workman['Дата приёма'] = '1980-01-01'
-            date_start = datetime.datetime.strptime(workman['Дата приёма'].replace('-', ''), '%Y%m%d').date()
-            birthday = datetime.datetime.strptime(workman['Дата рождения'].replace('-', ''), '%Y%m%d').date()
-            positions = await db.view_worker_position(name)
-            dep = [pos for pos in positions if workman['Подразделение'] in pos[1]]
-            try:
-                if dep[0][2] != workman['Должность'] and dep[0][1] == workman['Подразделение']:
-                    await db.join_position(workman_id[0][0], \
-                                           workman['Должность'], dep[0][1], date_start,\
-                                            workman['Вид занятости'])
-                elif dep[0][1] != workman['Подразделение'] and dep[0][2] == workman['Должность']:
-                    await db.join_position(workman_id[0][0], \
-                                           dep[0][1], workman['Подразделение'], date_start,\
-                                            workman['Вид занятости'])
+tree = ET.parse(latest_file)
+root = tree.getroot()
+async def import_workers():     
+    circle = 0
+    while len(root) > circle:
+        per_i = 0
+        while per_i < 10:
+            name = root[per_i+circle].get('ФИО')
+            per_i+=1
+            birthday = root[per_i+circle].get('ДатаРождения')[:-9]
+            per_i+=1
+            position = root[per_i+circle].get('Должность')
+            if position == '':
+                break
+            per_i+=1
+            department = root[per_i+circle].get('Подразделение')
+            if department == '':
+                break
+            per_i+=1
+            employment = root[per_i+circle].get('ВидЗанятости')
+            per_i+=1
+            date_start = root[per_i+circle].get('ДатаПриема')[:-9]
+            per_i+=1
+            date_expire = root[per_i+circle].get('ДатаУвольнения')[:-9]
+            per_i+=3
+            status = root[per_i+circle+1].get('Статус')
+            workman_id = await db.get_worker_id(name)
+            exist_workman = await db.check_worker(name)
+            if date_start == '0001-01-01':
+                    date_start = '1980-01-01'
+            date_start = datetime.datetime.strptime(date_start.replace('-', ''), '%Y%m%d').date()
+            birthday = datetime.datetime.strptime(birthday.replace('-', ''), '%Y%m%d').date()
+            if exist_workman and status == 'Работающий':
+                exist_position = await db.check_worker_position(name, position, department)
+                if exist_position:
+                    await db.check_workplace_data(name, position, department, date_start, employment)
+                    break                    
                 else:
                     await db.join_position(workman_id[0][0], \
-                                           workman['Должность'], workman['Подразделение'], date_start,\
-                                            workman['Вид занятости'])
-                if dep[0][3] == None or dep[0][4] == None:
-                    await db.edit_position(workman_id[0][0], \
-                                           workman['Должность'], workman['Подразделение'], date_start,\
-                                            workman['Вид занятости'])
-            except IndexError:
-                pass
-            if dep == []:
-                await db.join_position(workman_id[0][0], \
-                                       workman['Должность'],workman['Подразделение'], \
-                                        date_start, workman['Вид занятости'])
-        elif not exist_workman:
-            await db.add_new_worker(workman['ФИО'], birthday, \
-                                       workman['Должность'],workman['Подразделение'], \
-                                        date_start, workman['Вид занятости'])
-        if exist_workman and workman['Статус'] == 'Уволен':
-            date_expire = datetime.datetime.strptime(workman['Дата увольнения'].replace('-', ''), '%Y%m%d').date()
-            await db.leave_position(workman_id[0][0], workman['Должность'], workman['Подразделение'], date_expire)
-
-
+                                            position, department, date_start,\
+                                            employment)
+            elif not exist_workman and status != 'Уволен':
+                await db.add_new_worker(name, birthday, \
+                                           position,department, \
+                                            date_start, employment)
+            if exist_workman and status == 'Уволен':
+                date_expire = datetime.datetime.strptime(date_expire.replace('-', ''), '%Y%m%d').date()
+                await db.leave_position(workman_id[0][0], position, department, date_expire)
+            per_i+=1
+        circle+=11
 
 
 if __name__ == "__main__":
