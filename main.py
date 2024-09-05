@@ -13,7 +13,9 @@ class DBCommands:
     ADD_NEW_WORKER = 'INSERT INTO workers (fullname, email, snils) VALUES ($1, $2, $3)'
     ADD_DEP = 'UPDATE workers w SET "department"=$2 WHERE id=$1'
     DELETE_WORKER = 'DELETE FROM workers WHERE id=$1'
-    GET_WORKER_ID = 'SELECT id FROM workers w WHERE w.fullname=$1'
+    GET_MIS_EMPLOYERS = "SELECT * FROM mis_employers"
+    GET_WORKER_ID_WITH_FIO = 'SELECT id FROM workers w WHERE w.fullname=$1'
+    GET_WORKER_ID_WITH_SNILS = 'SELECT id FROM workers w WHERE w.snils=$1'
     GET_WORKER_ID_WITH_AD = 'SELECT id FROM workers w WHERE w.ad=$1'
     VIEW_WORKER = 'SELECT * FROM workers w WHERE w.fullname LIKE $1' 
     VIEW_WORKER_ON_ID = 'SELECT * FROM workers WHERE id=$1'
@@ -39,6 +41,8 @@ class DBCommands:
     SAVE_OLD_FIO = 'INSERT INTO old_names (worker_id, name) VALUES ($1, $2)'
     EDIT_WORKER_FIO = 'UPDATE workers w SET "fullname"=$2 WHERE id=$1'
     EDIT_WORKER_DATA = "UPDATE workers w SET snils=$2 WHERE id=$1"
+    NULLIFY_MIS = "UPDATE workers w SET mis=False"
+    NULLIFY_TIS = "UPDATE workers w SET tis=False"
     ADD_APTEKA = "UPDATE workers SET APTEKA='True' where id=$1"
     ADD_HR = "UPDATE workers SET ZKGU='True' where id=$1"
     ADD_BGU_1 = "UPDATE workers SET BGU_1='True' where id=$1"
@@ -248,7 +252,7 @@ class DBCommands:
     
     async def get_worker_id(self, fullname):
         arg = fullname
-        command = self.GET_WORKER_ID
+        command = self.GET_WORKER_ID_WITH_FIO
         result = await DataBase.execute(command, arg, fetch=True)
         return result
     
@@ -271,7 +275,7 @@ class DBCommands:
             await DataBase.execute(self.ADD_NEW_DEP, dep_name, execute=True)
         if existing_position == False:
             await DataBase.execute(self.ADD_NEW_POSITION, pos_name, execute=True)
-        worker_id = await DataBase.execute(self.GET_WORKER_ID, fullname, fetch=True)
+        worker_id = await DataBase.execute(self.GET_WORKER_ID_WITH_FIO, fullname, fetch=True)
         workplace_args = (int(worker_id[0][0]), pos_name, dep_name, date_start, employment)
         await DataBase.execute(workplace_command, *workplace_args, execute=True)
 
@@ -588,6 +592,26 @@ class DBCommands:
         command = self.DELETE_DIETA
         await DataBase.execute(command, arg, execute=True)
 #Конец блока о доступе к ИС
+
+    async def nullify_mis(self):
+        await DataBase.execute(self.NULLIFY_MIS, execute=True)
+    
+    async def nullify_tis(self):
+        await DataBase.execute(self.NULLIFY_TIS, execute=True)
+    
+    async def change_mis(self):
+        employers = await DataBase.execute(self.GET_MIS_EMPLOYERS, fetch=True)
+        for medic in employers:
+            if medic[3] != None:
+                employer_id_fetch = await DataBase.execute(self.GET_WORKER_ID_WITH_SNILS, medic[3], fetch=True)
+            else:
+                employer_id_fetch = await DataBase.execute(self.GET_WORKER_ID_WITH_FIO, medic[1], fetch=True)
+            if employer_id_fetch != []:
+                employer_id = int(employer_id_fetch[0][0])
+                await DataBase.execute(self.ADD_MIS, employer_id, execute=True)
+                if medic[4]:
+                    await DataBase.execute(self.ADD_TIS, employer_id, execute=True)
+
 
     async def add_telephone(self, worker_id, telephone, name):
         try:
