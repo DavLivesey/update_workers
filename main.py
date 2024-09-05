@@ -43,12 +43,14 @@ class DBCommands:
     EDIT_WORKER_DATA = "UPDATE workers w SET snils=$2 WHERE id=$1"
     NULLIFY_MIS = "UPDATE workers w SET mis=False"
     NULLIFY_TIS = "UPDATE workers w SET tis=False"
+    NULLIFY_TIS_SPK = "UPDATE workers w SET tis_spk=False"
     ADD_APTEKA = "UPDATE workers SET APTEKA='True' where id=$1"
     ADD_HR = "UPDATE workers SET ZKGU='True' where id=$1"
     ADD_BGU_1 = "UPDATE workers SET BGU_1='True' where id=$1"
     ADD_BGU_2 = "UPDATE workers SET BGU_2='True' where id=$1"
     ADD_DIETA = "UPDATE workers SET DIETA='True' where id=$1"
     ADD_MIS = "UPDATE workers SET MIS='True' where id=$1"
+    ADD_TIS_SPK = "UPDATE workers SET TIS_SPK='True' where id=$1"
     ADD_TIS = "UPDATE workers SET TIS='True' where id=$1"
     ADD_SED = "UPDATE workers SET SED='True' where id=$1"
     DELETE_APTEKA = "UPDATE workers SET APTEKA='False' where id=$1"
@@ -598,6 +600,9 @@ class DBCommands:
     
     async def nullify_tis(self):
         await DataBase.execute(self.NULLIFY_TIS, execute=True)
+
+    async def nullify_tis_spk(self):
+        await DataBase.execute(self.NULLIFY_TIS_SPK, execute=True)
     
     async def change_mis(self):
         employers = await DataBase.execute(self.GET_MIS_EMPLOYERS, fetch=True)
@@ -611,6 +616,17 @@ class DBCommands:
                 await DataBase.execute(self.ADD_MIS, employer_id, execute=True)
                 if medic[4]:
                     await DataBase.execute(self.ADD_TIS, employer_id, execute=True)
+    
+    async def change_tis(self):
+        employers = await DataBase.execute(self.GET_MIS_EMPLOYERS, fetch=True)
+        for medic in employers:
+            if medic[3] != None:
+                employer_id_fetch = await DataBase.execute(self.GET_WORKER_ID_WITH_SNILS, medic[3], fetch=True)
+            else:
+                employer_id_fetch = await DataBase.execute(self.GET_WORKER_ID_WITH_FIO, medic[1], fetch=True)
+            if employer_id_fetch != []:
+                employer_id = int(employer_id_fetch[0][0])
+                await DataBase.execute(self.ADD_TIS_SPK, employer_id, execute=True)
 
 
     async def add_telephone(self, worker_id, telephone, name):
