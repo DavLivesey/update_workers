@@ -19,10 +19,9 @@ def remove_upper_lines(doc, n):
 
 tree = ET.parse(latest_file)
 root = tree.getroot()
-async def import_workers():     
+async def import_workers():
+    await db.pre_expire()
     circle = 0
-    employer_dict = {'name': '', 'department': '', 'position': '', 'employ': ''}
-    dict_list = []
     while len(root) > circle:        
         per_i = 0
         while per_i < 10:
@@ -48,7 +47,6 @@ async def import_workers():
             per_i+=1
             status = root[per_i+circle+1].get('Статус')
             workman_id = await db.get_worker_id(name)
-            exist_workman = await db.check_worker(name)
             try:
                 snils = hex(int((old_snils.replace('-', '')).replace(' ', '')))
             except ValueError:
@@ -56,55 +54,52 @@ async def import_workers():
             if date_start == '0001-01-01':
                     date_start = '1980-01-01'
             date_start = datetime.datetime.strptime(date_start.replace('-', ''), '%Y%m%d').date()
-            if exist_workman and status == 'Работающий':
-                await db.edit_worker_data(workman_id[0][0], snils)
-                if employer_dict['name'] != name:
-                    dict_list.clear()
-                    employer_dict['name'] = name
-                    employer_dict['department'] = department
-                    employer_dict['position'] = position
-                    employer_dict['employ'] = employment
-                    dict_list.append((name, position, department, employment))
-                else:
-                    employer_dict['name'] = name
-                    employer_dict['department'] = department
-                    employer_dict['position'] = position
-                    employer_dict['employ'] = employment
-                    dict_list.append((name, position, department, employment))
-                exist_position = await db.check_worker_position(name, position, department, employment)
+            if status == 'Работающий':
+                exist_position = await db.check_worker_position(name, position, department, employment)      
                 if exist_position:
-                    await db.check_workplace_data(name, position, department, date_start, employment, status=False)
-                    break                    
-                else:                    
-                    await db.join_position(workman_id[0][0], \
-                                            position, department, date_start,\
-                                            employment)
-            elif not exist_workman and status not in ('Уволен', 'Отпуск по уходу за ребенком', 'Отпуск по беременности и родам'):
-                if snils != '':
-                    employer = await db.get_worker_with_snils(snils)
-                    if len(employer) != 0:
-                        await db.edit_fio(employer[0][0], name, employer[0][1])
-                    else:
-                        await db.add_new_worker(name, snils, \
-                                                   position,department, \
-                                                    date_start, employment, email)
-            if exist_workman and status in ('Уволен', 'Отпуск по уходу за ребенком', 'Отпуск по беременности и родам'):
-                    employ = (i for i in dict_list)
-                    ex_employer_dict = {'name': '', 'department': '', 'position': '', 'employ': ''}
-                    ex_employer_dict['name'] = name
-                    ex_employer_dict['department'] = department
-                    ex_employer_dict['position'] = position
-                    ex_employer_dict['employ'] = employment                  
-                    for e in employ:                 
-                        if str((name, position, department, employment)) == str(e):
-                            await db.return_workplace(name, position, department, employment)
-                            break
+                    await db.prolongate_working(workman_id[0][0], department, position, employment)                  
+                else:
+                    if snils != '':
+                        employer = await db.get_worker_with_snils(snils)
+                        if len(employer) != 0:
+                            if name != employer[0][1]:
+                                print(name, snils, position,department, date_start, employment, email)
+                                print(exist_position)
+                                await db.edit_fio(employer[0][0], name, employer[0][1])
+                            else:
+                                await db.join_position(snils, \
+                                                    position, department, date_start,\
+                                                    employment, name)
                         else:                            
-                            new_date_expire = datetime.datetime.strptime(date_expire.replace('-', ''), '%Y%m%d').date()
-                            await db.leave_position(workman_id[0][0], position, department, new_date_expire, employment, name)
+                            await db.add_new_worker(name, snils, \
+                                                       position,department, \
+                                                        date_start, employment, email)
+                    else:
+                        exist_worker = await db.check_worker(name)
+                        if exist_worker:
+                            await db.join_position(name, \
+                                                    position, department, date_start,\
+                                                    employment, name)
+                        else:
+                            await db.add_new_worker(name, snils, \
+                                                       position,department, \
+                                                        date_start, employment, email)
+            elif status in ('Отпуск по уходу за ребенком', 'Отпуск по беременности и родам'):              
+                try:
+                    new_date_expire = datetime.datetime.strptime(date_expire.replace('-', ''), '%Y%m%d').date()
+                    await db.dekret(workman_id[0][0], position, department, new_date_expire, employment)
+                except:
+                    pass
+            elif status == 'Уволен':
+                try:
+                    new_date_expire = datetime.datetime.strptime(date_expire.replace('-', ''), '%Y%m%d').date()
+                    await db.add_expire(workman_id[0][0], position, department, new_date_expire, employment)
+                except:
+                    pass
             per_i+=1
         circle+=11
-    await db.create_message_expire()
+    await db.result_expired()
+    #await db.create_message_expire()
     
 
 

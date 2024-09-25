@@ -1,7 +1,7 @@
 #Здесь код взаимодействия непосредственно с БД
 from sql import DataBase
 from logging import getLogger
-from datetime import datetime as dt, timedelta
+from datetime import datetime as dt
 from config import bot, ADMIN_CHAT
 from aiogram.enums import ParseMode
 
@@ -14,6 +14,7 @@ class DBCommands:
     ADD_DEP = 'UPDATE workers w SET "department"=$2 WHERE id=$1'
     DELETE_WORKER = 'DELETE FROM workers WHERE id=$1'
     GET_MIS_EMPLOYERS = "SELECT * FROM mis_employers"
+    GET_TIS_EMPLOYERS = "SELECT * FROM tis_employers"
     GET_WORKER_ID_WITH_FIO = 'SELECT id FROM workers w WHERE w.fullname=$1'
     GET_WORKER_ID_WITH_SNILS = 'SELECT id FROM workers w WHERE w.snils=$1'
     GET_WORKER_ID_WITH_AD = 'SELECT id FROM workers w WHERE w.ad=$1'
@@ -41,6 +42,7 @@ class DBCommands:
     SAVE_OLD_FIO = 'INSERT INTO old_names (worker_id, name) VALUES ($1, $2)'
     EDIT_WORKER_FIO = 'UPDATE workers w SET "fullname"=$2 WHERE id=$1'
     EDIT_WORKER_DATA = "UPDATE workers w SET snils=$2 WHERE id=$1"
+    PRE_EXPIRE = "UPDATE workplaces SET expired=True"
     NULLIFY_MIS = "UPDATE workers w SET mis=False"
     NULLIFY_TIS = "UPDATE workers w SET tis=False"
     NULLIFY_TIS_SPK = "UPDATE workers w SET tis_spk=False"
@@ -76,8 +78,11 @@ class DBCommands:
                   'JOIN mailbox m ON wm.mail_id =m.id '\
                   'WHERE w.fullname = $1'
     ADD_NEW_POSITION = 'INSERT INTO positions (pos_name) VALUES ($1)'
-    JOIN_POSITION = 'INSERT INTO workplaces (worker_id, pos_id, dep_id, date_start, employment) ' \
-                    'VALUES ($1, (select id FROM positions p WHERE p.pos_name=$2), '\
+    JOIN_POSITION_SNILS = 'INSERT INTO workplaces (worker_id, pos_id, dep_id, date_start, employment) ' \
+                    'VALUES ((SELECT id FROM workers WHERE snils=$1), (select id FROM positions p WHERE p.pos_name=$2), '\
+                    '(SELECT id FROM departments d WHERE d.dep_name=$3), $4, $5)'
+    JOIN_POSITION_NAME = 'INSERT INTO workplaces (worker_id, pos_id, dep_id, date_start, employment) ' \
+                    'VALUES ((SELECT id FROM workers WHERE fullname=$1), (select id FROM positions p WHERE p.pos_name=$2), '\
                     '(SELECT id FROM departments d WHERE d.dep_name=$3), $4, $5)'
     CHECK_WORKER_POSITION = 'SELECT EXISTS (SELECT * from workplaces wp where '\
                             'wp.worker_id=(SELECT id FROM workers w WHERE w.fullname=$1) '\
@@ -87,15 +92,15 @@ class DBCommands:
                             'wp.worker_id=(SELECT id FROM workers w WHERE w.fullname=$1) '\
                             'and wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$2) '\
                             'and wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3) and wp.employment=$4'
-    RETURN_WORKPLACE = 'UPDATE workplaces wp SET expired=False, date_expire=NULL, date_blocking=NULL '\
-                        'WHERE wp.worker_id=(SELECT id FROM workers w WHERE w.fullname=$1) and '\
-                    'wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$2) and '\
-                    'wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3) and '\
-                    'wp.employment=$4'
     UPDATE_WORKPLACE = 'UPDATE workplaces wp SET date_start=$2, employment=$3, expired=$4,  date_blocking=NULL '\
                         'WHERE wp.id=$1'
     DELETE_BLOCKING = 'UPDATE workplaces wp SET date_expire=NULL, date_blocking=NULL '\
                         'WHERE wp.id=$1'
+    ADD_DATE_EXPIRE = "UPDATE workplaces wp set date_expire=$4, date_blocking=$6 "\
+                     "WHERE wp.worker_id=$1 and "\
+                     "wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$2) and "\
+                     "wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3) and wp.employment=$5"
+    RESULT_EXPIRED = "UPDATE workplaces wp SET date_blocking=$1, date_expire=$1 WHERE date_blocking is NULL AND date_expire is NULL AND expired=True"
     GET_FRESH_BLOCKED_WP = 'SELECT w.fullname, p.pos_name, d.dep_name, wp.date_start, wp.date_expire, wp.employment FROM workplaces wp '\
                             'JOIN workers w ON wp.worker_id = w.id '\
                             'JOIN positions p ON wp.pos_id = p.id '\
@@ -106,12 +111,16 @@ class DBCommands:
                     'WHERE wp.worker_id=$1 and '\
                     'wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$2) and '\
                     'wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3)'
-    LEAVE_POSITION = 'UPDATE workplaces wp set expired=True, date_expire=$4, date_blocking=$6 '\
+    DEKRET = 'UPDATE workplaces wp set expired=True, date_expire=$4, date_blocking=$6 '\
                      'WHERE wp.worker_id=$1 and '\
                      'wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$2) and '\
-                     'wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3) and wp.employment=$5'
+                     'wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$3) and wp.employment=$5 and date_blocking=NULL'
     ADD_NEW_DEP = 'INSERT INTO departments (dep_name) VALUES ($1)'
     CHECK_IS_DEP = 'SELECT EXISTS (SELECT * FROM departments WHERE dep_name LIKE $1)'
+    PROLONGATE_WORKPLACE = "UPDATE workplaces wp set expired=False, date_expire=NULL, date_blocking=NULL "\
+                     "WHERE wp.worker_id=$1 and "\
+                     "wp.pos_id=(SELECT id FROM positions p WHERE p.pos_name=$3) and "\
+                     "wp.dep_id=(SELECT id FROM departments d WHERE d.dep_name=$2) and wp.employment=$4"
     
     #Блок работы с сертификатами
     ADD_NEW_SERT = 'INSERT INTO sertificates (worker_id, center_name, serial_number, date_start, date_finish)' \
@@ -267,7 +276,7 @@ class DBCommands:
     async def add_new_worker(self, fullname, snils, pos_name, dep_name, date_start, employment, email):
         worker_args = (fullname, email, snils)                       
         worker_command = self.ADD_NEW_WORKER
-        workplace_command = self.JOIN_POSITION
+        workplace_command = self.JOIN_POSITION_SNILS
         await DataBase.execute(worker_command, *worker_args, execute=True)
         check_position_command = self.CHECK_IS_POSITION
         check_department_command = self.CHECK_IS_DEP
@@ -278,7 +287,7 @@ class DBCommands:
         if existing_position == False:
             await DataBase.execute(self.ADD_NEW_POSITION, pos_name, execute=True)
         worker_id = await DataBase.execute(self.GET_WORKER_ID_WITH_FIO, fullname, fetch=True)
-        workplace_args = (int(worker_id[0][0]), pos_name, dep_name, date_start, employment)
+        workplace_args = (snils, pos_name, dep_name, date_start, employment)
         await DataBase.execute(workplace_command, *workplace_args, execute=True)
 
         
@@ -374,14 +383,9 @@ class DBCommands:
             arg = result[0][0]
             delete_command = self.DELETE_BLOCKING
             await DataBase.execute(delete_command, arg, execute=True)
-    
-    async def return_workplace(self, name, position, department, employment):
-        args = (name, position, department, employment)
-        command = self.RETURN_WORKPLACE
-        await DataBase.execute(command, *args, execute=True)
 
 
-    async def join_position(self, worker_id, pos_name, dep_name, date_start, employment):
+    async def join_position(self, snils, pos_name, dep_name, date_start, employment, name):
         # Функция добавляет сотруднику должность в подразделении, если таковые существуют
         check_pos_arg = pos_name
         check_dep_arg = dep_name
@@ -393,8 +397,12 @@ class DBCommands:
             await DataBase.execute(self.ADD_NEW_DEP, dep_name, execute=True)
         if pos_exist == False:
             await DataBase.execute(self.ADD_NEW_POSITION, pos_name, execute=True)
-        args = (int(worker_id), pos_name, dep_name, date_start, employment)
-        command = self.JOIN_POSITION
+        if snils != '':
+            args = (snils, pos_name, dep_name, date_start, employment)
+            command = self.JOIN_POSITION_SNILS
+        else:
+            args = (name, pos_name, dep_name, date_start, employment)
+            command = self.JOIN_POSITION_NAME
         await DataBase.execute(command, *args, execute=True)
 
     async def edit_position(self, worker_id, pos_name, dep_name, date_start, employment):
@@ -402,23 +410,17 @@ class DBCommands:
         command = self.EDIT_POSITION
         await DataBase.execute(command, *args, execute=True)
     
-    async def leave_position(self, worker_id, pos_name, dep_name, date_finish, employment, name):
-        # Функция убирает сотруднику должность в подразделении
-        pos_exist = await self.check_position(pos_name)
-        dep_exist = await self.check_dep(dep_name)
-        if pos_exist:
-            if dep_exist:
-                today = dt.now()
-                args = (int(worker_id), pos_name, dep_name, date_finish, employment, today)
-                check_args = (name, pos_name, dep_name, employment)
-                check_command = self.CHECK_WORKPLACE_DATA
-                check_result = await DataBase.execute(check_command, *check_args, fetch=True)
-                try:
-                    if check_result[0][4] == False and check_result[0][8] == None:
-                        command = self.LEAVE_POSITION
-                        await DataBase.execute(command, *args, execute=True)                        
-                except IndexError:
-                    pass
+    async def dekret(self, worker_id, pos_name, dep_name, date_finish, employment):
+        today = dt.now()
+        args = (int(worker_id), pos_name, dep_name, date_finish, employment, today)
+        command = self.DEKRET
+        await DataBase.execute(command, *args, execute=True)
+    
+    async def add_expire(self, worker_id, pos_name, dep_name, date_finish, employment):
+        today = dt.now()
+        args = (int(worker_id), pos_name, dep_name, date_finish, employment, today)
+        command = self.ADD_DATE_EXPIRE
+        await DataBase.execute(command, *args, execute=True)
     
     async def create_message_expire(self):
         today = dt.now()
@@ -481,6 +483,9 @@ class DBCommands:
                 result_sec = ''
                 result_phones = ''
                 result_mailboxes = ''
+                result_contacts = ''
+                for contact in contacts_list:
+                    result_contacts += f'{contact}\n'
                 for mail in mailbox_list:
                     result_mailboxes += f'{mail}\n'
                 for phone in phone_list:
@@ -488,9 +493,9 @@ class DBCommands:
                 for sec in sec_list:
                     result_sec += f'{sec}'
                 if dt.strftime(fired[4], '000%Y-%m-%d') == '0001-01-01':
-                    fired_message = f'Ушла в декрет'              
+                    fired_message = f'Ушла в декрет'
                 message = f'{person[1]}\n\n{position[0][1]}\n{position[0][0]}\n\n{fired[5]}.\nТелефоны: {result_phones}\n'\
-                            f'{result_sec}\nПочта: {contacts_list[0]}\nРассылки: {result_mailboxes}\nДоступы: {list_person}\n{fired_message}'
+                            f'{result_sec}\nПочта: {result_contacts}\nРассылки: {result_mailboxes}\nДоступы: {list_person}\n{fired_message}'
                 await bot.send_message(chat_id=ADMIN_CHAT, text=message,  parse_mode=ParseMode.HTML)
     
     async def add_new_dep(self, dep_name):
@@ -606,6 +611,7 @@ class DBCommands:
     
     async def change_mis(self):
         employers = await DataBase.execute(self.GET_MIS_EMPLOYERS, fetch=True)
+        file = open('./dangers.docx', 'w+')
         for medic in employers:
             if medic[3] != None:
                 employer_id_fetch = await DataBase.execute(self.GET_WORKER_ID_WITH_SNILS, medic[3], fetch=True)
@@ -616,9 +622,11 @@ class DBCommands:
                 await DataBase.execute(self.ADD_MIS, employer_id, execute=True)
                 if medic[4]:
                     await DataBase.execute(self.ADD_TIS, employer_id, execute=True)
+            else:
+                file.write(medic[1])
     
-    async def change_tis(self):
-        employers = await DataBase.execute(self.GET_MIS_EMPLOYERS, fetch=True)
+    async def change_tis_spk(self):
+        employers = await DataBase.execute(self.GET_TIS_EMPLOYERS, fetch=True)
         for medic in employers:
             if medic[3] != None:
                 employer_id_fetch = await DataBase.execute(self.GET_WORKER_ID_WITH_SNILS, medic[3], fetch=True)
@@ -662,3 +670,16 @@ class DBCommands:
         args = (id, snils)
         data_command = self.EDIT_WORKER_DATA
         await DataBase.execute(data_command, *args, execute=True)
+    
+    async def pre_expire(self):
+        await DataBase.execute(self.PRE_EXPIRE, execute=True)
+    
+    async def prolongate_working(self, worker_id, dep_name, pos_name, employment):
+        args = (worker_id, dep_name, pos_name, employment)
+        command = self.PROLONGATE_WORKPLACE
+        await DataBase.execute(command, *args, execute=True)
+    
+    async def result_expired(self):
+        arg = dt.today()
+        command = self.RESULT_EXPIRED
+        await DataBase.execute(command, arg, execute=True)
